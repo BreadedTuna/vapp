@@ -1,14 +1,23 @@
-cd ~
+#!/bin/bash
 
-cd ~/vapp
-python3 -m venv vapp
-source vapp/bin/activate
+# Ensure script is run from the repository directory
+if [ ! -f "bot.py" ]; then
+    echo "Error: Please run this script from the vapp repository directory."
+    exit 1
+fi
 
-pip install discord.py discord asyncio psutil pyautogui paperclip google-generativeai zenity
+# Set up the virtual environment in a separate directory (e.g., .venv)
+python3 -m venv .venv
+source .venv/bin/activate
 
-sudo apt install espeak
-sudo apt install ffmpeg
-sudo apt install zenity
+# Install Python dependencies
+pip install --upgrade pip  # Ensure pip is up to date
+pip install discord.py asyncio psutil pyautogui paperclip google-generativeai zenity
 
-echo "Installation Complete"
-echo "You may now run the bot.py with 'python3 bot.py'."
+# Install system-level dependencies
+sudo apt update
+sudo apt install -y espeak ffmpeg zenity
+
+# Notify user of successful installation
+echo "Installation Complete."
+echo "You may now run the bot using 'python3 bot.py'."
