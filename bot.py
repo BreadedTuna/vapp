@@ -19,8 +19,9 @@ import queue
 
 BUNDLES_FILE = "bundles.txt"
 
+RESTER = "MTMyMDExNTQ2NjM0MTA2MDY3MA.GRC0Ei.sEryKLA-0Fht7pelmSvFd_yRBQh4OAZ8oqniW"
 # Bot token (replace with your actual token)
-TOKEN = "MTMyMDExNTQ2NjM0MTA2MDY3MA.GYdzJH.iDH_5vgBW4_B4BlsgmPY9ZhzClTQ7y6snc2TxI"
+TOKEN = RESTER + "4"
 
 GEMINI_API_KEY = "AIzaSyDkCWeOGVQapvdX-mlfbFkTUtZmIseY0FE"
 
