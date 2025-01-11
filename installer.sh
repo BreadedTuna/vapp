@@ -12,9 +12,10 @@ source .venv/bin/activate
 
 # Install Python dependencies
 pip install --upgrade pip  # Ensure pip is up to date
-pip install discord.py asyncio psutil pyautogui paperclip google-generativeai zenity
+pip install discord.py discord asyncio psutil pyautogui paperclip google-generativeai zenity
 
 # Install system-level dependencies
+sudo apt-get install -y python3-tk python3-dev
 sudo apt update
 sudo apt install -y espeak ffmpeg zenity
 
