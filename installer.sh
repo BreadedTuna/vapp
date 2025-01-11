@@ -1,6 +1,6 @@
 cd ~
 
-cd vapp
+cd ~/vapp
 python3 -m venv vapp
 source vapp/bin/activate
 
