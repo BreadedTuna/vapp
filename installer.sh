@@ -2,7 +2,7 @@ cd ~
 
 cd vapp
 python3 -m venv vapp
-source vapp/bin
+source vapp/bin/activate
 
 pip install discord.py discord asyncio psutil pyautogui paperclip google-generativeai zenity
 
