@@ -21,4 +21,4 @@ sudo apt install -y espeak ffmpeg zenity
 
 # Notify user of successful installation
 echo "Installation Complete."
-echo "You may now run the bot using 'python3 bot.py'."
+echo "Running file with 'python3 bot.py'"
